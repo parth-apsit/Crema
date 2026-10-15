@@ -42,21 +42,25 @@ The application is packaged using a multi-stage Dockerfile based on `node:20-alp
 - **Stage 1 (`deps`):** Downloads and caches production npm packages.
 - **Stage 2 (`builder`):** Compiles the Next.js standalone server and bundles client assets.
 - **Stage 3 (`runner`):** Minimal runtime container running as a non-privileged `nextjs` user on port 3000.
-- **Healthcheck:** Embedded `wget --spider http://localhost:3000/api/health` probe.
+- **Healthcheck:** Embedded `wget --spider http://127.0.0.1:3000/api/health` probe.
 
 ### Multi-Container Orchestration (`docker-compose.yml`)
-- **`crema-web`:** Port `3000` (Next.js Application)
-- **`prometheus`:** Port `9090` (Scrapes `/api/metrics` every 10s)
-- **`grafana`:** Port `3001` (Pre-provisioned dashboards)
+- **`crema-web`:** Port `3000` (Next.js Application, container healthcheck enabled)
+- **`prometheus`:** Port `9090` (Scrapes `/api/metrics` every 10s over `crema-net`)
+- **`grafana`:** Port `3001` (Pre-provisioned Prometheus datasource & dashboards)
 
 ### Local Launch Command:
 ```bash
 docker compose up -d --build
 ```
 
-### Screenshot Placeholder: Docker Containers Running
-```
-[Insert Screenshot: `docker compose ps` output or Docker Desktop showing crema-web, prometheus, and grafana]
+### Verified Multi-Container Status (`docker compose ps`):
+```text
+$ docker compose ps
+NAME               IMAGE                     COMMAND                  SERVICE      CREATED          STATUS                   PORTS
+crema-grafana      grafana/grafana:10.3.3    "/run.sh"                grafana      15 minutes ago   Up 13 minutes            0.0.0.0:3001->3000/tcp
+crema-prometheus   prom/prometheus:v2.50.1   "/bin/prometheus --c…"   prometheus   15 minutes ago   Up 13 minutes            0.0.0.0:9090->9090/tcp
+crema-web          crema-crema-web           "docker-entrypoint.s…"   crema-web    12 minutes ago   Up 12 minutes (healthy)  0.0.0.0:3000->3000/tcp
 ```
 
 ---
@@ -86,10 +90,12 @@ A real-time telemetry stack was embedded directly into the application:
    - `nodejs_heap_used_bytes` / `nodejs_heap_total_bytes`: Memory consumption metrics.
 3. **Grafana Dashboards:** Auto-provisioned dashboard displaying app health, request volume, latency curves, and heap allocation.
 
-### Screenshot Placeholder: Grafana Dashboard
-```
-[Insert Screenshot: Grafana dashboard at localhost:3001 showing metrics graphs during application usage]
-```
+### Verified Grafana Telemetry Dashboard:
+The dashboard `Crema POS Application Overview` (`uid: crema-pos-overview`) is auto-provisioned at `http://localhost:3001/d/crema-pos-overview/crema-pos-application-overview` with four active panels querying Prometheus over `http://prometheus:9090`:
+- **Application Uptime (`expr: process_uptime_seconds`)**: Stat panel displaying live application uptime.
+- **Total HTTP Requests (`expr: sum(http_requests_total) or vector(0)`)**: Counter tracking live request throughput across routes (`/api/health`, `/api/metrics`, `/login`, `/customer/menu`).
+- **Heap Memory Usage (`expr: nodejs_heap_used_bytes` / `nodejs_heap_total_bytes`)**: Real-time memory allocation graph.
+- **HTTP Request Volume by Path (`expr: http_requests_total`)**: Grouped time-series breakdown of requests by HTTP status, path, and method.
 
 ---
 

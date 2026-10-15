@@ -111,6 +111,30 @@ services:
 docker compose up -d --build
 ```
 
+### Verification Output (`docker compose ps`):
+```text
+$ docker compose ps
+NAME               IMAGE                     COMMAND                  SERVICE      CREATED         STATUS                   PORTS
+crema-grafana      grafana/grafana:10.3.3    "/run.sh"                grafana      10 minutes ago   Up 8 minutes             0.0.0.0:3001->3000/tcp
+crema-prometheus   prom/prometheus:v2.50.1   "/bin/prometheus --c…"   prometheus   10 minutes ago   Up 8 minutes             0.0.0.0:9090->9090/tcp
+crema-web          crema-crema-web           "docker-entrypoint.s…"   crema-web    7 minutes ago    Up 7 minutes (healthy)   0.0.0.0:3000->3000/tcp
+```
+
+### Container Health Inspection:
+```json
+$ docker inspect crema-web --format '{{json .State.Health}}'
+{
+  "Status": "healthy",
+  "FailingStreak": 0,
+  "Log": [
+    {
+      "ExitCode": 0,
+      "Output": "Connecting to 127.0.0.1:3000 (127.0.0.1:3000)\nremote file exists\n"
+    }
+  ]
+}
+```
+
 ---
 
 ## 3. Observability & Monitoring Verification
@@ -155,8 +179,8 @@ nodejs_heap_total_bytes 40697856
 ```
 
 ### 3.3 Prometheus Configuration & Scraper Verification (`prometheus/prometheus.yml`)
-- Scrape interval: `10s` (configured in `docker-compose.yml`) / `5s` (runtime verification)
-- Target: `crema-web:3000` (container network) / `localhost:3000` (host verification)
+- Scrape interval: `10s` (configured in `docker-compose.yml`)
+- Target: `crema-web:3000` (bridged container network: `crema_crema-net`)
 - Scrape path: `/api/metrics`
 - Scrape Status: **`health: "up"`**, `lastError: ""`
 
@@ -164,15 +188,23 @@ Live target verification from Prometheus API (`/api/v1/targets`):
 ```json
 {
   "discoveredLabels": {
-    "__address__": "localhost:3000",
+    "__address__": "crema-web:3000",
     "__metrics_path__": "/api/metrics",
+    "__scheme__": "http",
+    "__scrape_interval__": "10s",
+    "__scrape_timeout__": "10s",
     "job": "crema-web"
   },
-  "labels": { "instance": "localhost:3000", "job": "crema-web" },
-  "scrapeUrl": "http://localhost:3000/api/metrics",
-  "health": "up",
+  "labels": {
+    "instance": "crema-web:3000",
+    "job": "crema-web"
+  },
+  "scrapePool": "crema-web",
+  "scrapeUrl": "http://crema-web:3000/api/metrics",
+  "globalUrl": "http://crema-web:3000/api/metrics",
   "lastError": "",
-  "lastScrapeDuration": 0.0064
+  "lastScrapeDuration": 0.0169,
+  "health": "up"
 }
 ```
 
@@ -186,22 +218,24 @@ Live vector query response from Prometheus (`/api/v1/query?query=http_requests_t
       {
         "metric": {
           "__name__": "http_requests_total",
-          "job": "crema-web",
-          "method": "GET",
-          "path": "/api/health",
-          "status": "200"
-        },
-        "value": [1792026600.287, "6"]
-      },
-      {
-        "metric": {
-          "__name__": "http_requests_total",
+          "instance": "crema-web:3000",
           "job": "crema-web",
           "method": "GET",
           "path": "/api/metrics",
           "status": "200"
         },
-        "value": [1792026600.287, "60"]
+        "value": [1792089584.956, "14"]
+      },
+      {
+        "metric": {
+          "__name__": "http_requests_total",
+          "instance": "crema-web:3000",
+          "job": "crema-web",
+          "method": "GET",
+          "path": "/api/health",
+          "status": "200"
+        },
+        "value": [1792089584.956, "13"]
       }
     ]
   }
@@ -210,12 +244,12 @@ Live vector query response from Prometheus (`/api/v1/query?query=http_requests_t
 
 ### 3.4 Grafana Dashboard Live Provisioning (`grafana/provisioning/dashboards/crema-dashboard.json`)
 Grafana v10.3.3 auto-provisioning verified on port `3001`:
-- **Datasource**: Prometheus at `http://localhost:9090` automatically registered (`uid: PBFA97CFB590B2093`, `isDefault: true`).
+- **Datasource**: Prometheus at `http://prometheus:9090` automatically registered (`uid: PBFA97CFB590B2093`, `isDefault: true`) over Docker network `crema_crema-net`.
 - **Dashboard**: `Crema POS Application Overview` (`uid: crema-pos-overview`) in folder `Crema Monitoring`.
 - **Panels Verified Active & Receiving Live Metrics**:
   1. **Application Uptime**: `expr: process_uptime_seconds` (stat panel)
   2. **Total HTTP Requests**: `expr: sum(http_requests_total) or vector(0)` (stat panel, verified returning live counts)
-  3. **Heap Memory Usage**: `expr: nodejs_heap_used_bytes` / `nodejs_heap_total_bytes` (timeseries panel, verified reporting ~43MB heap)
+  3. **Heap Memory Usage**: `expr: nodejs_heap_used_bytes` / `nodejs_heap_total_bytes` (timeseries panel, verified reporting ~40MB heap)
   4. **HTTP Request Volume by Path**: `expr: http_requests_total` (timeseries breakdown by `{method, path, status}`)
 
 Live query through Grafana Proxy (`/api/datasources/proxy/1/api/v1/query?query=nodejs_heap_used_bytes`):
@@ -228,10 +262,10 @@ Live query through Grafana Proxy (`/api/datasources/proxy/1/api/v1/query?query=n
       {
         "metric": {
           "__name__": "nodejs_heap_used_bytes",
-          "instance": "localhost:3000",
+          "instance": "crema-web:3000",
           "job": "crema-web"
         },
-        "value": [1792026536.87, "43043928"]
+        "value": [1792089652.281, "39799280"]
       }
     ]
   }
@@ -351,7 +385,7 @@ service cloud.firestore {
 
 | Requirement | Status | Verification Detail |
 |---|---|---|
-| **Docker Compose Stack** | Verified & Ready | `docker-compose.yml` links `crema-web`, `prometheus`, and `grafana` via `crema-net`. Standalone build verified. |
+| **Docker Compose Stack** | Fully Verified & Operational | `docker-compose.yml` multi-container stack (`crema-web` healthy, `crema-prometheus`, `crema-grafana`) verified live end-to-end on `crema-net`. |
 | **Telemetry & Metrics** | Live & Functional | `/api/health` and `/api/metrics` return live uptime, request counters, and Node.js heap memory. |
 | **CI Validation** | Passed (Run #38616261598) | ESLint, Vitest (36 tests), and standalone Next.js build pass without error. |
 | **GHCR Deployment** | Passed (Run #38616261660) | Docker image successfully built and pushed to GitHub Container Registry. VM SSH step documented as templated placeholder. |
