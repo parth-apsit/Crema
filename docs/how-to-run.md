@@ -1,18 +1,18 @@
 # Crema — How to Run & Operate the System
 
-This guide provides end-to-end instructions for launching, verifying, and troubleshooting the Crema application stack.
+This guide provides end-to-end instructions for launching, verifying, and operating the Crema application stack.
 
 ---
 
 ## Quick Reference: Service URLs & Credentials
 
-| Service | Host URL | Port | Default Credentials | Description |
+| Service | Host URL | Port / Ingress | Authentication | Description |
 |---|---|---|---|---|
-| **Crema Web Application** | [http://localhost:3000](http://localhost:3000) | `3000` | Firebase Auth | Customer & Admin POS portals |
-| **App Health Probe** | [http://localhost:3000/api/health](http://localhost:3000/api/health) | `3000` | None | JSON health status & uptime |
-| **Prometheus Metrics** | [http://localhost:3000/api/metrics](http://localhost:3000/api/metrics) | `3000` | None | Raw Prometheus exposition format |
-| **Prometheus Dashboard** | [http://localhost:9090](http://localhost:9090) | `9090` | None | Scrape targets, TSDB & query UI |
-| **Grafana Monitoring** | [http://localhost:3001](http://localhost:3001) | `3001` | `admin` / `admin` | Real-time observability dashboard |
+| **Crema Web Application** | [http://localhost:3000](http://localhost:3000) | `0.0.0.0:3000` | Firebase Auth | Customer & Admin POS portals |
+| **App Health Probe** | [http://localhost:3000/api/health](http://localhost:3000/api/health) | `0.0.0.0:3000` | None | JSON health status, uptime, & liveness |
+| **Prometheus Metrics** | [http://localhost:3000/api/metrics](http://localhost:3000/api/metrics) | `0.0.0.0:3000` | None | Raw Prometheus exposition format (v0.0.4) |
+| **Prometheus Dashboard** | [http://localhost:9090](http://localhost:9090) | `127.0.0.1:9090` (Loopback) | None | Scrape targets, TSDB & PromQL query UI |
+| **Grafana Monitoring** | [http://localhost:3001](http://localhost:3001) | `127.0.0.1:3001` (Loopback) | Configured in `.env.local` | Real-time observability dashboard |
 
 > **Direct Dashboard Link:** [http://localhost:3001/d/crema-pos-overview/crema-pos-application-overview](http://localhost:3001/d/crema-pos-overview/crema-pos-application-overview)
 
@@ -23,81 +23,110 @@ This guide provides end-to-end instructions for launching, verifying, and troubl
 This method runs the entire production-grade topology: Next.js standalone container, Prometheus scraper, and Grafana telemetry.
 
 ### 1. Prerequisites Check
-Make sure Docker CLI and the Linux Docker engine are available:
+Make sure Docker CLI and Docker engine are operational:
 ```powershell
-docker info
+# In PowerShell (Windows):
+docker version
 ```
-If using the Windows RDP / WSL2 setup configured on this machine:
-- The Linux Docker Engine runs inside WSL2 Ubuntu (`tcp://localhost:2376`).
-- Your PowerShell environment should have `$env:DOCKER_HOST = "tcp://localhost:2376"` (configured automatically in PowerShell profile).
-- If the Docker daemon is ever inactive, launch it with:
-  ```powershell
-  wsl -u root systemctl start docker
-  ```
-
-### 2. Build and Start the Full Stack
-From the project root (`c:\Users\RDP\crema\Crema`):
-
-```powershell
-# Build container images and start all 3 services in detached mode
-docker compose up -d --build
+```bash
+# In Linux / WSL2:
+docker version
 ```
 
-*Note: On this WSL2 setup, you can also trigger builds directly within WSL:*
-```powershell
-wsl -u root bash -c "cd /mnt/c/Users/RDP/crema/Crema && docker compose up -d --build"
+### 2. Configuration Setup
+Ensure your local environment configuration file (`.env.local`) exists with required Firebase and Grafana configuration:
+```env
+NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyAIXAiNC0qKQDkt5G-XaQj0hFAN4MCrEl8
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=coffee-1919.firebaseapp.com
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=coffee-1919
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=coffee-1919.firebasestorage.app
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=369807633070
+NEXT_PUBLIC_FIREBASE_APP_ID=1:369807633070:web:b0cf0378d9ee167154db3f
+NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-45HZ2TR4TK
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=your_secure_password
 ```
 
-### 3. Verify Container Status
+### 3. Build and Start the Full Stack
+From the project root:
+
+```bash
+# Validate Compose configuration syntax
+docker compose config --quiet
+
+# Build container images cleanly without stale cache
+docker compose build --no-cache
+
+# Start all 3 services in detached mode
+docker compose up -d
+```
+
+### 4. Verify Container Status
 Run:
-```powershell
+```bash
 docker compose ps
 ```
 Expected output:
 ```text
-NAME               IMAGE                     COMMAND                  SERVICE      CREATED          STATUS                    PORTS
-crema-grafana      grafana/grafana:10.3.3    "/run.sh"                grafana      15 minutes ago   Up 15 minutes             0.0.0.0:3001->3000/tcp, [::]:3001->3000/tcp
-crema-prometheus   prom/prometheus:v2.50.1   "/bin/prometheus --c…"   prometheus   15 minutes ago   Up 15 minutes             0.0.0.0:9090->9090/tcp, [::]:9090->9090/tcp
-crema-web          crema-crema-web           "docker-entrypoint.s…"   crema-web    15 minutes ago   Up 15 minutes (healthy)   0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp
+NAME               IMAGE                     COMMAND                  SERVICE      STATUS                    PORTS
+crema-grafana      grafana/grafana:10.3.3    "/run.sh"                grafana      Up (healthy)              127.0.0.1:3001->3000/tcp
+crema-prometheus   prom/prometheus:v2.50.1   "/bin/prometheus --c…"   prometheus   Up (healthy)              127.0.0.1:9090->9090/tcp
+crema-web          crema-crema-web           "docker-entrypoint.s…"   crema-web    Up (healthy)              0.0.0.0:3000->3000/tcp
 ```
 > Notice that `crema-web` displays **`(healthy)`**.
 
-### 4. Verify Health and Telemetry Endpoints
+### 5. Verify Health and Telemetry Endpoints
+*(Use `curl.exe` on Windows PowerShell to bypass built-in PowerShell alias behavior)*
 
 **Test Application Health:**
 ```powershell
-curl http://localhost:3000/api/health
+curl.exe -fsS http://localhost:3000/api/health
 ```
 Expected response:
 ```json
-{"status":"ok","uptime":300,"timestamp":"2026-10-15T18:45:00.000Z","service":"crema-web","version":"0.1.0"}
+{"status":"ok","uptime":300,"timestamp":"2026-10-19T18:45:00.000Z","service":"crema-web","version":"0.1.0"}
 ```
 
 **Test Prometheus Scraping:**
 ```powershell
-curl http://localhost:9090/api/v1/targets
+curl.exe -fsS http://localhost:9090/api/v1/targets
 ```
-Verify `crema-web:3000` reports `"health": "up"`.
+Verify `crema-web:3000` reports `"health": "up"` with empty `lastError`.
 
-**Test Grafana Telemetry Query:**
+**Test Application Metrics Exposition (Prometheus Format):**
 ```powershell
-curl -u admin:admin "http://localhost:3001/api/datasources/proxy/1/api/v1/query?query=http_requests_total"
+curl.exe -fsS http://localhost:3000/api/metrics
 ```
 
-### 5. Inspect Service Logs
+**Test Observability Queries (Prometheus API):**
 ```powershell
+# Active target check
+curl.exe -fsS "http://localhost:9090/api/v1/query?query=up"
+
+# Total request counter
+curl.exe -fsS "http://localhost:9090/api/v1/query?query=http_requests_total"
+
+# P95 latency calculation from histogram
+curl.exe -fsS "http://localhost:9090/api/v1/query?query=histogram_quantile(0.95,sum+by(le)(rate(http_request_duration_seconds_bucket[5m])))"
+```
+
+**Test Controlled Observability 5xx Error:**
+```powershell
+curl.exe -fsS "http://localhost:3000/api/health?simulate_error=500"
+```
+
+### 6. Inspect Service Logs
+```bash
+# View recent application logs
+docker compose logs --tail=100 crema-web
+
 # Follow all container logs in real time
 docker compose logs -f
-
-# Follow specific container logs
-docker compose logs -f crema-web
-docker compose logs -f prometheus
-docker compose logs -f grafana
 ```
 
-### 6. Stop or Restart the Stack
-```powershell
-# Stop all containers (preserves container volumes and state)
+### 7. Stop or Restart the Stack
+```bash
+# Stop all containers (preserves volume data)
 docker compose stop
 
 # Restart stopped containers
@@ -117,34 +146,25 @@ docker compose down -v
 For active frontend/backend development with hot-reloading:
 
 ### 1. Prerequisites
-- Node.js `20.x` or `22.x`
+- Node.js `22.x` (CI and Docker parity)
 - npm `10.x` or higher
 
 ### 2. Configure Environment Variables
-Verify `.env.local` exists in the repository root with valid Firebase credentials:
-```env
-NEXT_PUBLIC_FIREBASE_API_KEY=AIzaSyAIXAiNC0qKQDkt5G-XaQj0hFAN4MCrEl8
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=coffee-1919.firebaseapp.com
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=coffee-1919
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=coffee-1919.firebasestorage.app
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=369807633070
-NEXT_PUBLIC_FIREBASE_APP_ID=1:369807633070:web:b0cf0378d9ee167154db3f
-NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-45HZ2TR4TK
-```
+Verify `.env.local` exists in the repository root.
 
 ### 3. Install Dependencies
-```powershell
-npm install --legacy-peer-deps
+```bash
+npm ci --legacy-peer-deps
 ```
 
 ### 4. Start Development Server
-```powershell
+```bash
 npm run dev
 ```
-Open [http://localhost:3000](http://localhost:3000) in your browser. Changes to `.tsx` and `.css` files will trigger hot module replacement.
+Open [http://localhost:3000](http://localhost:3000) in your browser. Changes to `.tsx` and `.css` files trigger hot module replacement.
 
-### 5. Compile and Run Production Build Locally
-```powershell
+### 5. Compile and Run Production Standalone Build Locally
+```bash
 # Compile Next.js 16 standalone production bundle
 npm run build
 
@@ -158,44 +178,32 @@ npm run start
 
 | Goal | Command | Description |
 |---|---|---|
-| **Run Unit & Component Tests** | `npm test` | Executes 4 test suites across 20 test cases with Vitest |
-| **Watch Mode Tests** | `npm run test:watch` | Re-runs tests automatically upon file changes |
-| **Coverage Report** | `npm run test:coverage` | Generates branch, function, and line coverage |
-| **Lint Codebase** | `npm run lint` | Runs Next.js ESLint rules |
-| **TypeScript Typecheck** | `npx tsc --noEmit` | Strict type verification without emitting build artifacts |
-| **Validate Firestore Rules** | `firebase-tools` | Simulates security rule permissions (or CI automated run) |
+| **Run Complete Test Suite** | `npm test` | Executes 8 test suites across 51 test cases with Vitest (unit, component, security/RBAC) |
+| **Interactive Watch Mode** | `npm run test:watch` | Re-runs tests automatically upon file changes |
+| **Lint Codebase** | `npm run lint` | Runs ESLint 9 with Next.js rules |
+| **TypeScript Typecheck** | `npm run typecheck` | Strict compiler type verification (`tsc --noEmit`) without emitting build artifacts |
+| **Standalone Build** | `npm run build` | Compiles Next.js standalone bundle |
 
 ---
 
 ## Troubleshooting & Common Issues
 
 ### 1. `docker: Cannot connect to the Docker daemon`
-- **Cause:** The WSL2 Linux Docker engine is stopped or `$env:DOCKER_HOST` is unset.
-- **Fix:**
-  ```powershell
-  # Start Docker daemon in WSL2
-  wsl -u root systemctl start docker
+- **Cause:** Docker daemon is stopped or Docker desktop/WSL2 integration is not active.
+- **Fix:** Start the Docker daemon or service, or check `docker version`.
 
-  # Ensure DOCKER_HOST points to TCP socket
-  $env:DOCKER_HOST = "tcp://localhost:2376"
-  docker ps
-  ```
-
-### 2. `no matching manifest for windows/amd64 in the image cache`
-- **Cause:** Docker CLI is communicating with the Windows native engine (`tcp://127.0.0.1:2375`) instead of the Linux engine (`tcp://localhost:2376`).
-- **Fix:** Set `$env:DOCKER_HOST = "tcp://localhost:2376"` in your PowerShell session.
-
-### 3. Container Healthcheck shows `(unhealthy)`
+### 2. Container Healthcheck shows `(unhealthy)`
 - **Cause:** Healthcheck probe connecting to `localhost:3000` which resolved to IPv6 `[::1]:3000` inside Alpine, while the node server listens on IPv4.
-- **Fix:** Verify `docker-compose.yml` and `Dockerfile` use explicit IPv4: `http://127.0.0.1:3000/api/health`. Re-deploy with `docker compose up -d --no-build crema-web`.
+- **Fix:** Both `Dockerfile` and `docker-compose.yml` use explicit IPv4: `http://127.0.0.1:3000/api/health`.
 
-### 4. Port Conflict (`Port 3000/3001/9090 is already allocated`)
+### 3. Port Conflict (`Port 3000/3001/9090 is already allocated`)
 - **Cause:** Another process or background development server is already bound to that port.
 - **Fix:**
   ```powershell
+  # Windows PowerShell:
   Get-NetTCPConnection -LocalPort 3000, 3001, 9090 -ErrorAction SilentlyContinue | Select-Object LocalPort, OwningProcess
   Stop-Process -Id <OwningProcessId> -Force
   ```
 
-### 5. Grafana Asks for Password Change
-- **Fix:** Default credentials are `admin` / `admin`. You can click **Skip** when prompted to set a new password, or update `GF_SECURITY_ADMIN_PASSWORD` in `docker-compose.yml`.
+### 4. Grafana Admin Authentication
+- **Fix:** Admin user and password are provided securely via `GRAFANA_ADMIN_USER` and `GRAFANA_ADMIN_PASSWORD` in `.env.local` (or container environment variables). Hardcoded repository defaults have been removed.

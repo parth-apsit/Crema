@@ -1,9 +1,15 @@
 name: Deploy Pipeline
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI Pipeline"]
     branches: [ main ]
+    types: [ completed ]
   workflow_dispatch:
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -13,6 +19,7 @@ jobs:
   build-and-push:
     name: Build & Push Docker Image
     runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     permissions:
       contents: read
       packages: write
@@ -41,6 +48,7 @@ jobs:
             type=sha,format=short,prefix=sha-
 
       - name: Build and push Docker image
+        id: build-push
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -58,6 +66,11 @@ jobs:
             NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'coffee-1919.firebasestorage.app' }}
             NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=${{ secrets.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || 'G-45HZ2TR4TK' }}
 
+      - name: Output image digest
+        run: |
+          echo "Image successfully published to GHCR:"
+          echo "Digest: ${{ steps.build-push.outputs.digest }}"
+
   deploy:
     name: Deploy to Production VM
     needs: build-and-push
@@ -65,24 +78,45 @@ jobs:
     if: github.ref == 'refs/heads/main'
 
     steps:
-      - name: Deploy via SSH (Templated)
+      - name: Check for deployment credentials
+        id: check-secrets
+        run: |
+          if [ -n "${{ secrets.DEPLOY_HOST }}" ] && [ -n "${{ secrets.DEPLOY_USER }}" ] && [ -n "${{ secrets.DEPLOY_KEY }}" ]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy via SSH (When secrets provided)
+        if: steps.check-secrets.outputs.has_secrets == 'true'
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          script: |
+            set -e
+            cd ${{ secrets.DEPLOY_PATH || '/opt/crema' }}
+            echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+            docker compose pull crema-web
+            docker compose up -d crema-web
+            TIMEOUT=60
+            until curl -fsS http://127.0.0.1:3000/api/health || [ $TIMEOUT -le 0 ]; do
+              sleep 2
+              TIMEOUT=$((TIMEOUT-2))
+            done
+            if [ $TIMEOUT -le 0 ]; then
+              echo "Deployment healthcheck failed!"
+              exit 1
+            fi
+            echo "Deployment healthy!"
+
+      - name: Delivery Scope Notice (When VM credentials not provided)
+        if: steps.check-secrets.outputs.has_secrets != 'true'
         run: |
           echo "=========================================================="
-          echo "Production deployment step configured for GHCR."
+          echo "Delivery Scope: Image published to GHCR successfully."
           echo "Image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest"
-          echo "To enable automatic VM deployment, configure repository secrets:"
-          echo "  - DEPLOY_HOST (VM IP or domain)"
-          echo "  - DEPLOY_USER (SSH user)"
-          echo "  - DEPLOY_KEY  (Private SSH key)"
-          echo "  - DEPLOY_PATH (Target directory on VM)"
+          echo "VM Auto-Deployment: Not configured (DEPLOY_HOST/DEPLOY_KEY secrets not set)."
+          echo "Deliverable currently scoped to GHCR artifact publication."
           echo "=========================================================="
-        # Example ssh step to activate once secrets are added:
-        # uses: appleboy/ssh-action@v1.0.3
-        # with:
-        #   host: ${{ secrets.DEPLOY_HOST }}
-        #   username: ${{ secrets.DEPLOY_USER }}
-        #   key: ${{ secrets.DEPLOY_KEY }}
-        #   script: |
-        #     cd ${{ secrets.DEPLOY_PATH }}
-        #     docker-compose pull
-        #     docker-compose up -d --remove-orphans
