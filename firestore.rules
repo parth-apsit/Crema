@@ -16,10 +16,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isAuthenticated() && (
-        getUserData().role == 'admin' ||
-        request.auth.token.email.matches('.*admin.*')
-      );
+      return isAuthenticated() && getUserData().role == 'admin';
     }
 
     // Users Collection: Prevent privilege escalation
@@ -41,14 +38,20 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
-    // Orders Collection
+    // Orders Collection: Scoped to Owner or Admin with strict validation
     match /orders/{orderId} {
       // Customers can read their own orders; admins can read all orders
       allow read: if (isAuthenticated() && resource.data.userId == request.auth.uid) || isAdmin();
 
-      // Customers can create orders tied to their own UID with 'pending'/'received' status
+      // Customers can create orders tied to their own UID with verified initial status and fields
       allow create: if isAuthenticated() &&
-        request.resource.data.userId == request.auth.uid;
+        request.resource.data.userId == request.auth.uid &&
+        request.resource.data.status in ['pending', 'received'] &&
+        request.resource.data.totalAmount is number &&
+        request.resource.data.totalAmount >= 0 &&
+        request.resource.data.items is list &&
+        request.resource.data.items.size() > 0 &&
+        !request.resource.data.keys().hasAny(['role', 'isAdmin', 'refundApproved']);
 
       // Only admins can update order status / brewStatus (or cancel)
       allow update: if isAdmin();
@@ -67,7 +70,7 @@ service cloud.firestore {
       allow read: if true;
       allow write: if isAdmin();
 
-      match /items/{itemId} {
+      match /{allSubcollections=**} {
         allow read: if true;
         allow write: if isAdmin();
       }

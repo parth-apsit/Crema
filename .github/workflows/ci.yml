@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Build, Lint & Test
@@ -27,6 +34,9 @@ jobs:
       - name: Run linter
         run: npm run lint
 
+      - name: Run TypeScript typecheck
+        run: npm run typecheck
+
       - name: Run automated test suite
         run: npm run test
 
@@ -40,3 +50,50 @@ jobs:
           NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN: ${{ secrets.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN || 'coffee-1919.firebaseapp.com' }}
           NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET: ${{ secrets.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET || 'coffee-1919.firebasestorage.app' }}
           NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID: ${{ secrets.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || 'G-45HZ2TR4TK' }}
+
+  smoke-test:
+    name: Container Smoke Test
+    needs: validate
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build Docker test image
+        run: |
+          docker build \
+            --build-arg NEXT_PUBLIC_FIREBASE_API_KEY=test-api-key \
+            --build-arg NEXT_PUBLIC_FIREBASE_APP_ID=1:123456789:web:abcdef \
+            --build-arg NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=123456789 \
+            --build-arg NEXT_PUBLIC_FIREBASE_PROJECT_ID=coffee-ci \
+            --build-arg NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=coffee-ci.firebaseapp.com \
+            --build-arg NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=coffee-ci.firebasestorage.app \
+            --build-arg NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=G-TEST \
+            -t crema-web:smoke .
+
+      - name: Launch container and test health endpoint
+        run: |
+          docker run -d --name crema-smoke-container -p 3000:3000 crema-web:smoke
+          TIMEOUT=60
+          until curl -fsS http://127.0.0.1:3000/api/health || [ $TIMEOUT -le 0 ]; do
+            echo "Waiting for container to become healthy... ($TIMEOUT seconds left)"
+            sleep 2
+            TIMEOUT=$((TIMEOUT-2))
+          done
+          if [ $TIMEOUT -le 0 ]; then
+            echo "Healthcheck timed out!"
+            exit 1
+          fi
+          echo "Health check succeeded:"
+          curl -fsS http://127.0.0.1:3000/api/health
+          echo "Metrics check:"
+          curl -fsS http://127.0.0.1:3000/api/metrics
+
+      - name: Cleanup smoke test container
+        if: always()
+        run: |
+          if docker ps -a --format '{{.Names}}' | grep -q 'crema-smoke-container'; then
+            docker logs --tail=50 crema-smoke-container
+            docker rm -f crema-smoke-container
+          fi

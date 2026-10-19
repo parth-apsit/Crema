@@ -35,16 +35,16 @@ Crema is a modern, responsive coffee shop ordering and operations management web
 - **Database**: Cloud Firestore (NoSQL, transactions for atomic inventory deductions)
 - **Styling**: Vanilla CSS Modules & theme tokens (warm coffee aesthetic)
 - **Analytics & Visualizations**: Recharts, Lucide Icons, SheetJS (xlsx export)
-- **Containerization**: Multi-stage Docker (`node:20-alpine`) with standalone output
-- **Observability**: Custom Prometheus metrics middleware (`/api/metrics`), health endpoint (`/api/health`), Grafana dashboard
-- **CI/CD**: GitHub Actions (lint, typecheck, unit/component tests, Docker build & push)
+- **Containerization**: Multi-stage Docker (`node:22-alpine`) with standalone output
+- **Observability**: Prometheus metrics exposition (`/api/metrics`), health endpoint (`/api/health`), Grafana dashboard
+- **CI/CD**: GitHub Actions (lint, typecheck, unit & security tests, Docker smoke test, GHCR build & push)
 
 ---
 
 ## Quick Start (Local Development)
 
 ### Prerequisites
-- Node.js 20+ and npm
+- Node.js 22 (LTS) and npm 10+
 - Firebase project credentials
 
 ### 1. Environment Setup
@@ -53,7 +53,7 @@ Copy the example environment file and configure your credentials:
 cp .env.example .env.local
 ```
 
-Edit `.env.local` with your Firebase project keys:
+Edit `.env.local` with your Firebase project keys and Grafana admin password:
 ```env
 NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
 NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project.firebaseapp.com
@@ -62,11 +62,13 @@ NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_project.firebasestorage.app
 NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
 NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
 NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID=your_measurement_id
+GRAFANA_ADMIN_USER=admin
+GRAFANA_ADMIN_PASSWORD=your_secure_password
 ```
 
 ### 2. Install Dependencies
 ```bash
-npm install
+npm ci --legacy-peer-deps
 ```
 
 ### 3. Run Development Server
@@ -84,8 +86,9 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 | `npm run dev` | `next dev --webpack` | Start local development server |
 | `npm run build` | `next build --webpack` | Compile standalone production build |
 | `npm run start` | `next start` | Launch production server |
-| `npm run lint` | `next lint` | Execute ESLint checks across codebase |
-| `npm test` | `vitest run` | Run all unit and component test suites |
+| `npm run lint` | `eslint` | Execute ESLint checks across codebase |
+| `npm run typecheck` | `tsc --noEmit` | Strict TypeScript compiler check without emitting artifacts |
+| `npm test` | `vitest run` | Run all unit, component, and security test suites |
 | `npm run test:watch` | `vitest` | Run tests in interactive watch mode |
 
 ---
@@ -95,34 +98,41 @@ Open [http://localhost:3000](http://localhost:3000) in your browser.
 Crema includes a full Docker stack containing the application, Prometheus metrics scraper, and Grafana monitoring dashboard.
 
 ```bash
-# Build and run the entire stack
-docker compose up --build -d
+# Validate compose configuration
+docker compose config --quiet
 
-# Check service status
+# Build container images without stale cache
+docker compose build --no-cache
+
+# Start the entire stack in detached mode
+docker compose up -d
+
+# Check service status and health
 docker compose ps
 
 # View application logs
-docker compose logs -f crema-web
+docker compose logs --tail=100 crema-web
 ```
 
-### Stack Endpoints
-- **Crema Web Application**: [http://localhost:3000](http://localhost:3000)
+### Stack Endpoints & Port Bindings
+- **Crema Web Application**: [http://localhost:3000](http://localhost:3000) (Ingress: `0.0.0.0:3000`)
 - **Application Health Check**: [http://localhost:3000/api/health](http://localhost:3000/api/health)
 - **Prometheus Metrics**: [http://localhost:3000/api/metrics](http://localhost:3000/api/metrics)
-- **Prometheus UI**: [http://localhost:9090](http://localhost:9090)
-- **Grafana Dashboard**: [http://localhost:3001](http://localhost:3001) (default login: `admin` / `crema2026`)
+- **Prometheus UI**: [http://localhost:9090](http://localhost:9090) (Bound to loopback `127.0.0.1:9090`)
+- **Grafana Dashboard**: [http://localhost:3001](http://localhost:3001) (Bound to loopback `127.0.0.1:3001`, authentication via `GRAFANA_ADMIN_USER` / `GRAFANA_ADMIN_PASSWORD`)
 
 ---
 
 ## Observability & Monitoring
 
-The application instruments HTTP requests via Next.js middleware and surfaces standard Prometheus exposition metrics at `/api/metrics`:
+The application surfaces standard Prometheus exposition metrics at `/api/metrics`:
 - `http_requests_total`: Counter partitioned by HTTP method, route, and status code
-- `http_request_duration_seconds`: Histogram measuring end-to-end request latency
-- `http_requests_active`: Current gauge of in-flight requests
-- `app_info`: System metadata and uptime
+- `http_request_duration_seconds`: Histogram with finite buckets (`0.005s` to `10s`), `+Inf`, sum, and count enabling p95 latency quantiles
+- `process_uptime_seconds`: Process uptime in seconds
+- `nodejs_heap_used_bytes` / `nodejs_heap_total_bytes`: Process heap memory usage in bytes
+- `crema_app_info`: System metadata and application version
 
-Pre-configured Grafana dashboards are automatically provisioned under `grafana/provisioning/` to visualize request rates, latency percentiles, error rates (4xx/5xx), and health status out-of-the-box.
+Pre-configured Grafana dashboards are automatically provisioned under `grafana/provisioning/` to visualize request rates (`sum(rate(http_requests_total[5m]))`), 5xx error ratios, p95 latency (`histogram_quantile(0.95, ...)`), heap allocation, and uptime out-of-the-box.
 
 ---
 
@@ -133,11 +143,13 @@ The repository integrates two GitHub Actions workflows:
 1. **Continuous Integration (`.github/workflows/ci.yml`)**:
    - Triggers on pull requests and pushes to `main`
    - Runs ESLint validation
-   - Executes TypeScript typechecking (`tsc --noEmit`)
-   - Executes Vitest unit & component test suites with coverage
-   - Validates multi-stage Docker build
+   - Executes TypeScript typechecking (`npm run typecheck`)
+   - Executes Vitest unit, component, and security test suites (51 tests)
+   - Executes Next.js standalone production build (`npm run build`)
+   - Runs container smoke test: builds Docker image, boots container, verifies `/api/health`, and tears down cleanly
 
 2. **Continuous Deployment (`.github/workflows/deploy.yml`)**:
-   - Triggers on pushes/tags to `main` following successful CI
-   - Builds production Docker image and publishes to GitHub Container Registry (GHCR)
-   - Performs automated rolling deployment to the target host via SSH
+   - Triggers upon successful completion of the CI Pipeline
+   - Builds production Docker image and publishes tagged artifacts (`latest` and immutable `sha-<commit>`) to GitHub Container Registry (GHCR)
+   - Records immutable image digest
+   - Supports automated SSH VM rollout when `DEPLOY_HOST`, `DEPLOY_USER`, and `DEPLOY_KEY` secrets are supplied; otherwise scopes delivery to verified GHCR publication
