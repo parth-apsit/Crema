@@ -364,3 +364,34 @@ service cloud.firestore {
 | **Firestore Security** | PASSED | Enforces strict RBAC; customer privilege escalation and order manipulation prevented. |
 | **CI/CD Configuration** | PASSED | CI pipeline enhanced with concurrency, typecheck, and container smoke test; Deploy workflow tags immutable SHA/digest. |
 | **Secret Hygiene** | PASSED | No credentials or `.env*` files committed; all private secrets excluded by `.gitignore` and `.dockerignore`. |
+
+---
+
+## 6. Visual Evidence Screenshots Matrix
+
+All visual evidence has been captured directly from the running production stack on the workstation:
+
+| Evidence ID | Screenshot File | Description | Target |
+|---|---|---|---|
+| **E07** | [E07_crema_login.png](./screenshots/E07_crema_login.png) | Crema Coffee Shop POS & Ordering Portal | `http://localhost:3000/login` |
+| **E07** | [E07_customer_menu.png](./screenshots/E07_customer_menu.png) | Crema Customer Navigation Bar & Cart | `http://localhost:3000/customer/menu` |
+| **E07** | [E07_api_health.png](./screenshots/E07_api_health.png) | Health Probe JSON Response | `http://localhost:3000/api/health` |
+| **E08** | [E08_api_metrics.png](./screenshots/E08_api_metrics.png) | Prometheus Standard Exposition Metrics | `http://localhost:3000/api/metrics` |
+| **E09** | [E09_prometheus_targets.png](./screenshots/E09_prometheus_targets.png) | Prometheus Target Health (`crema-web:3000` UP) | `http://localhost:9090/targets` |
+| **E09** | [E09_prometheus_query.png](./screenshots/E09_prometheus_query.png) | Prometheus Real-Time Query Graph (`http_requests_total`) | `http://localhost:9090/graph` |
+| **E10** | [E10_grafana_login.png](./screenshots/E10_grafana_login.png) | Grafana Telemetry Dashboard Portal | `http://localhost:3001/login` |
+
+### Visual Preview of Key Artifacts
+
+#### Crema Web Portal (`E07`)
+![Crema Application](./screenshots/E07_crema_login.png)
+
+#### Prometheus Target Health (`E09`)
+![Prometheus Targets](./screenshots/E09_prometheus_targets.png)
+
+#### Prometheus Live Metrics Graph (`E09`)
+![Prometheus Graph](./screenshots/E09_prometheus_query.png)
+
+#### Grafana Observability Portal (`E10`)
+![Grafana Portal](./screenshots/E10_grafana_login.png)
+
